@@ -1,186 +1,94 @@
-🛡️ Phishing XAI Experiment
+📧 FHMI Phishing XAI Demo — README
 
-Explainable AI Spam Filter — KU Leuven FHMI project
+Deze app demonstreert hoe je een phishing-detectiemodel kunt uitleggen met behulp van:
 
-Dit project is een interactieve Streamlit webapp die deelnemers e-mails toont en test hoe goed ze phishing herkennen onder verschillende uitlegcondities.
-De app combineert:
+Hugging Face teacher-model (BERT-tiny spam classifier)
 
-een HuggingFace spammodel (voorspelling)
+Surrogaatmodel + SHAP voor uitlegbaarheid
 
-een surrogaatmodel (TF-IDF + Logistic Regression)
+Gemini 2.5 Flash om begrijpelijke uitlegteksten te genereren
 
-SHAP explainability
+Streamlit als UI
 
-een phishing cue taxonomy
+De applicatie bevindt zich in app2.py.
 
-experimenteerfunctionaliteit met logging
+📦 1. Installatie
 
-Het resultaat is een bruikbaar platform om RQ1 (confidence/actionability) en RQ3 (understanding) te meten in user studies.
+Ga naar de projectmap en maak (optioneel) een virtual environment:
 
-📦 Installatie
-
-Clone dit project:
-
-git clone https://github.com/<jouw-repo>
-cd phishing-xai-experiment
-
-
-Maak en activeer een virtuele omgeving:
-
-macOS/Linux:
-
+cd FHMI-phishing
 python3 -m venv venv
 source venv/bin/activate
 
 
-Windows (PowerShell):
+Installeer alle vereiste Python-packages:
 
-python -m venv venv
-venv\Scripts\Activate.ps1
+python3 -m pip install --upgrade pip
+python3 -m pip install streamlit google-genai transformers torch scikit-learn shap tqdm sentencepiece
 
+🔑 2. Gemini API-sleutel instellen
 
-Installeer dependencies:
+De app gebruikt Gemini 2.5 Flash om uitlegteksten te genereren.
+Je hebt hiervoor een API-key nodig van:
 
-pip install streamlit shap scikit-learn transformers torch
+👉 https://ai.google.dev
 
-🚀 Applicatie runnen
+Sla deze key op als environment variable:
 
-Voer dit uit in de projectmap:
+export GEMINI_API_KEY="jouw_api_key_hier"
 
-streamlit run app.py
 
+Tip: wil je dit permanent maken?
+Voeg de regel toe aan ~/.zshrc of ~/.bashrc.
 
-De app opent automatisch in je browser op:
-👉 http://localhost:8501
+De app leest deze sleutel automatisch in via:
 
-🧪 Hoe het experiment werkt
+os.getenv("GEMINI_API_KEY")
 
-Deelnemers doorlopen e-mails één voor één.
-Voor elke e-mail zien ze:
+▶️ 3. De applicatie starten
 
-AI-classificatie (HuggingFace)
+Start de Streamlit-app:
 
-SPAM / NOT SPAM
+streamlit run app2.py
 
-Probability score
 
-Een van de drie uitlegcondities (via sidebar instelbaar):
+De UI opent automatisch in je browser op:
 
-Geen uitleg
+http://localhost:8501
 
-Alleen highlights — SHAP highlights verdachte woorden
+🧠 4. Hoe de app werkt
 
-Highlights + tekstuitleg — categorieën (Urgency, Credential Harvesting, enz.) + leerteksten
+Je plakt een e-mail in het tekstveld.
 
-De deelnemer geeft:
+Het HuggingFace-model geeft een phishing/spam score.
 
-eigen oordeel (phishing / niet)
+Een surrogaatmodel (RandomForest) wordt gebruikt om SHAP-waarden te berekenen.
 
-confidence (1–10)
+SHAP bepaalt welke woorden de score positief of negatief beïnvloeden.
 
-Na “Opslaan & volgende” gaat de app naar de volgende stimulus.
+De app stuurt geen ruwe e-mail naar Gemini (veiligheidsrestrictie), maar een modelanalyse.
 
-📄 Logging van resultaten
+Gemini genereert twee uitlegggen:
 
-Alle antwoorden worden automatisch opgeslagen in:
+één op maat van jongeren
 
-logs_experiment.csv
+één op maat van ouder publiek
 
+🤝 5. Support / fouten oplossen
+❌ “GEMINI_API_KEY is niet gezet”
 
-Elke rij bevat:
+Je vergeten de key te exporteren.
+Doe:
 
-Kolom	Betekenis
-participant_id	ID van de deelnemer
-condition	uitlegconditie (no_xai, highlight_only, full_xai)
-stimulus_id	ID van de e-mail
-ground_truth	1 = phishing, 0 = legitiem
-ai_is_spam	AI-voorspelling (1 of 0)
-ai_score	AI-probability score
-user_label	oordeel van deelnemer (1=phishing)
-confidence_1_10	zelfverzekerdheid
-reaction_time_sec	reactietijd voor die e-mail
-timestamp	tijdstip van antwoord
+export GEMINI_API_KEY="xxx"
 
-Deze CSV is direct bruikbaar voor statistische analyse (ANOVA, mixed-effects, etc.).
+❌ “Gemini kon geen uitleg geven (lege response)”
 
-🧠 Hoe de XAI werkt
+Gemini’s veiligheidsfilter blokkeerde de input.
+In deze versie wordt dit automatisch opgevangen.
 
-De uitlegfunctie gebruikt een surrogaatmodel:
+❌ ModuleNotFoundError
 
-TF-IDF vectorizer (1-grams/2-grams)
+Controleer of alles is geïnstalleerd:
 
-Logistic Regression (snelle, interpreteerbare baseline)
-
-SHAP LinearExplainer berekent welke woorden de spam-score verhogen
-
-Deze SHAP-woorden worden gematcht aan een phishing cue taxonomy:
-
-Urgency (“immediately”, “today”, “final notice”)
-
-Credential Harvesting (“verify password”, “login”, “authenticate”)
-
-Suspicious Links (“bit.ly”, “http”, “verify-...”)
-
-Threats (“account suspended”)
-
-Financial Bait, Impersonation, Generic phishing cues
-
-Daarna wordt een natuurlijke taal uitleg gegenereerd zodat gebruikers leren wat phishing-signalen zijn.
-
-Waarom surrogaatmodel?
-
-HuggingFace-transformers zijn moeilijk robuust uit te leggen met SHAP (tokenizers, subtokens, maskers).
-Daarom gebruiken we:
-
-HF-model → voorspelling
-
-Surrogaat (TF-IDF + SHAP) → uitlegbaarheid
-
-Dit is een bekende, valide XAI-benadering.
-
-📁 Bestandsstructuur
-/
-├── app.py                 # Streamlit experiment app
-├── logs_experiment.csv    # (wordt automatisch aangemaakt)
-├── README.md              # (dit bestand)
-└── stimuli/ (optioneel)   # om later meer mails te laden
-
-📘 Stimuli toevoegen
-
-Bovenaan in app.py staat:
-
-STIMULI = [
-    { "id": "mail1", "text": "...", "ground_truth": 1 },
-    ...
-]
-
-
-Je kunt eenvoudig meer mails toevoegen of genereren via CSV/JSON.
-
-👥 Team gebruik
-
-Iedereen in het team kan:
-
-De code openen
-
-Een eigen branche maken
-
-Nieuwe e-mails toevoegen, SHAP-categories uitbreiden, logging aanpassen
-
-De app lokaal runnen voor testen of user studies
-
-❓ Vragen of uitbreidingen
-
-In de code zit ruimte voor:
-
-condition randomization
-
-UI voor studiablokken
-
-import van externe datasets
-
-automatische generering van stimuli
-
-integratie met Firebase/Sheets i.p.v. CSV
-
-Laat gerust weten als je extra functionaliteit wil.# FHMI-phishing
+python3 -m pip install streamlit google-genai transformers torch scikit-learn shap tqdm sentencepiece
