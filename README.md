@@ -16,15 +16,19 @@ De applicatie bevindt zich in app2.py.
 
 Ga naar de projectmap en maak (optioneel) een virtual environment:
 
+```
 cd FHMI-phishing
 python3 -m venv venv
 source venv/bin/activate
+```
 
 
 Installeer alle vereiste Python-packages:
 
+```
 python3 -m pip install --upgrade pip
 python3 -m pip install streamlit google-genai transformers torch scikit-learn shap tqdm sentencepiece
+```
 
 🔑 2. Gemini API-sleutel instellen
 
@@ -35,7 +39,7 @@ Je hebt hiervoor een API-key nodig van:
 
 Sla deze key op als environment variable:
 
-export GEMINI_API_KEY="jouw_api_key_hier"
+```export GEMINI_API_KEY="jouw_api_key_hier"```
 
 
 Tip: wil je dit permanent maken?
@@ -49,7 +53,7 @@ os.getenv("GEMINI_API_KEY")
 
 Start de Streamlit-app:
 
-streamlit run app2.py
+```streamlit run app2.py```
 
 
 De UI opent automatisch in je browser op:
@@ -80,7 +84,7 @@ Gemini genereert twee uitlegggen:
 Je vergeten de key te exporteren.
 Doe:
 
-export GEMINI_API_KEY="xxx"
+```export GEMINI_API_KEY="xxx"```
 
 ❌ “Gemini kon geen uitleg geven (lege response)”
 
@@ -91,4 +95,4 @@ In deze versie wordt dit automatisch opgevangen.
 
 Controleer of alles is geïnstalleerd:
 
-python3 -m pip install streamlit google-genai transformers torch scikit-learn shap tqdm sentencepiece
+```python3 -m pip install streamlit google-genai transformers torch scikit-learn shap tqdm sentencepiece```
