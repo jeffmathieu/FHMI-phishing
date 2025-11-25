@@ -1,3 +1,4 @@
+import os
 import json
 import numpy as np
 import streamlit as st
@@ -8,62 +9,79 @@ from transformers import pipeline
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.ensemble import RandomForestRegressor
 
+from google import genai
+
 
 # ============================================================
-# 0. UITLEG-LLM (LOKAAL HUGGING FACE INSTRUCT-MODEL)
+# 0. GEMINI CLIENT (2.5 FLASH) VOOR UITLEG
 # ============================================================
+
+GEMINI_MODEL_NAME = "gemini-2.5-flash"
+
 
 @st.cache_resource
-def load_explainer_pipeline():
+def get_gemini_client():
     """
-    Laadt een klein, licht instructmodel dat lokaal kan draaien.
-    Geen zware downloads, geen sentencepiece, geen GPU nodig.
+    Maakt een Gemini client. Verwacht GEMINI_API_KEY in je environment.
     """
-    model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    explainer = pipeline(
-        task="text-generation",
-        model=model_name,
-        tokenizer=model_name,
-        max_new_tokens=250,
-    )
-    return explainer
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY is niet gezet.\n"
+            "Doe in je terminal bv.:\n"
+            '  export GEMINI_API_KEY="AIza..."\n'
+        )
+    return genai.Client(api_key=api_key)
 
+
+def generate_with_gemini(prompt: str, max_tokens: int = 300) -> str:
+    """
+    Minimalistische Gemini 2.5 Flash wrapper – exact zoals het werkt
+    in jouw testscript. Geen candidates/parts.
+    """
+    try:
+        client = get_gemini_client()
+        response = client.models.generate_content(
+            model=GEMINI_MODEL_NAME,
+            contents=prompt,
+        )
+
+        # Nieuw API-formaat → response.text is altijd de juiste output
+        if hasattr(response, "text") and response.text:
+            return response.text.strip()
+
+        # Fallback als het tóch leeg zou zijn
+        return "Gemini kon geen uitleg geven (lege response)."
+
+    except Exception as e:
+        return f"Kon geen uitleg genereren via Gemini API: {e}"
 
 
 # ============================================================
-# 1. HUGGING FACE "TEACHER" MODEL (SPAM/PHISHING CLASSIFIER)
+# 1. HUGGING FACE TEACHER (SPAM/PHISHING CLASSIFIER)
 # ============================================================
 
 @st.cache_resource
 def load_teacher_pipeline():
-    """
-    Hugging Face text-classification pipeline als 'teacher'
-    voor spam/phishing-detectie.
-    """
     teacher = pipeline(
         task="text-classification",
         model="mrm8488/bert-tiny-finetuned-sms-spam-detection",
         tokenizer="mrm8488/bert-tiny-finetuned-sms-spam-detection",
-        top_k=None
+        top_k=None,
     )
     return teacher
 
 
 def get_teacher_raw_and_score(teacher, text: str):
-    """
-    Laat het teacher-model een voorspelling maken en geeft:
-      - teacher_raw: ruwe output (list[dict])
-      - phishing_score: kans dat het spam/phishing is (0-1)
-    """
-    teacher_raw = teacher(text)
+    out = teacher(text)
 
-    if isinstance(teacher_raw, list):
-        if len(teacher_raw) > 0 and isinstance(teacher_raw[0], list):
-            logits = teacher_raw[0]
+    if isinstance(out, list):
+        if len(out) > 0 and isinstance(out[0], list):
+            logits = out[0]
         else:
-            logits = teacher_raw
+            logits = out
     else:
-        logits = [teacher_raw]
+        logits = [out]
 
     score_phish = None
     for item in logits:
@@ -87,16 +105,13 @@ def _build_surrogate_model_internal(teacher, emails):
     scores = [get_teacher_raw_and_score(teacher, t)[1] for t in emails]
     y_teacher = np.array(scores)
 
-    vectorizer = CountVectorizer(
-        ngram_range=(1, 2),
-        min_df=1
-    )
+    vectorizer = CountVectorizer(ngram_range=(1, 2), min_df=1)
     X = vectorizer.fit_transform(emails)
 
     student = RandomForestRegressor(
         n_estimators=200,
         random_state=42,
-        n_jobs=-1
+        n_jobs=-1,
     )
     student.fit(X, y_teacher)
 
@@ -106,9 +121,6 @@ def _build_surrogate_model_internal(teacher, emails):
 
 @st.cache_resource
 def build_surrogate_model_cached():
-    """
-    Mini-dataset om surrogaatmodel te trainen (voor demo).
-    """
     teacher = load_teacher_pipeline()
 
     base_emails = [
@@ -125,24 +137,17 @@ def build_surrogate_model_cached():
         "Kun je even controleren of alles klopt?",
 
         "Uw account is tijdelijk geblokkeerd wegens een veiligheidsprobleem. "
-        "Log in via onze speciale beveiligde pagina om uw identiteit te verifiëren."
+        "Log in via onze speciale beveiligde pagina om uw identiteit te verifiëren.",
     ]
 
-    vectorizer, student, explainer = _build_surrogate_model_internal(teacher, base_emails)
-    return vectorizer, student, explainer
+    return _build_surrogate_model_internal(teacher, base_emails)
 
 
 # ============================================================
 # 3. SHAP SAMENVATTING
 # ============================================================
 
-def get_shap_summary(x_sparse_row, vectorizer: CountVectorizer, explainer: shap.TreeExplainer, top_k: int = 5):
-    """
-    Samenvatting van SHAP:
-    - top positieve features (verhogen phishing-score)
-    - top negatieve features (verlagen phishing-score)
-    Alleen features die echt in de e-mail voorkomen.
-    """
+def get_shap_summary(x_sparse_row, vectorizer, explainer, top_k=5):
     x_dense = x_sparse_row.toarray()
     shap_vals = explainer.shap_values(x_dense)[0]
     feature_names = np.array(vectorizer.get_feature_names_out())
@@ -156,10 +161,7 @@ def get_shap_summary(x_sparse_row, vectorizer: CountVectorizer, explainer: shap.
             continue
         if x_dense[0, i] == 0:
             continue
-        positive.append({
-            "token": feature_names[i],
-            "shap": float(shap_vals[i]),
-        })
+        positive.append({"token": feature_names[i], "shap": float(shap_vals[i])})
         if len(positive) >= top_k:
             break
 
@@ -169,127 +171,97 @@ def get_shap_summary(x_sparse_row, vectorizer: CountVectorizer, explainer: shap.
             continue
         if x_dense[0, i] == 0:
             continue
-        negative.append({
-            "token": feature_names[i],
-            "shap": float(shap_vals[i]),
-        })
+        negative.append({"token": feature_names[i], "shap": float(shap_vals[i])})
         if len(negative) >= top_k:
             break
 
-    return {
-        "positive": positive,
-        "negative": negative,
-    }
+    return {"positive": positive, "negative": negative}
 
 
 # ============================================================
-# 4. PROMPT & UITLEGGENERATIE (MET HF INSTRUCT-MODEL)
+# 4. PROMPT & UITLEGGENERATIE (GEMINI)
 # ============================================================
 
-def build_explanation_prompt(email_text: str, teacher_raw, shap_summary: dict, audience: str) -> str:
-    """
-    Prompt voor de uitleg-LLM, expliciet gefocust op 'verdachte e-mails'
-    maar geformuleerd als defensieve, educatieve uitleg.
-    """
+def build_explanation_prompt(email_text, teacher_raw, shap_summary, audience):
     shap_json = json.dumps(shap_summary, indent=2, ensure_ascii=False)
     teacher_str = json.dumps(teacher_raw, indent=2, ensure_ascii=False)
 
     prompt = f"""
-Je bent een expert in digitale veiligheid en je helpt gewone gebruikers om verdachte e-mails te herkennen,
-zodat ze zich beter kunnen beschermen. Je analyseert ALLEEN de tekst op een educatieve manier.
-Je geeft GEEN instructies om zelf misleiding of fraude te plegen.
+Je bent een expert in digitale veiligheid. Je helpt mensen om verdachte e-mails te herkennen,
+zodat ze zich beter kunnen beschermen. Je geeft alleen defensieve uitleg
+(hoe iemand zich kan beschermen), geen instructies om zelf fraude of misleiding te plegen.
 
-Doelgroep: {audience}
+DOELGROEP: {audience}
 
-Je taak:
-- Beschrijf of de onderstaande e-mail mogelijk onbetrouwbaar of misleidend is.
-- Gebruik daarvoor:
-  * De inhoud van de e-mail
-  * De model-output van een verdachte-berichten-classifier
-  * De SHAP-samenvatting met woorden die meer of minder verdacht zijn
+Je krijgt hieronder:
+- de tekst van een e-mail,
+- een modelvoorspelling of de e-mail verdacht is,
+- en een lijst met woorden die het model belangrijk vindt (SHAP).
 
-Schrijf twee à drie duidelijke alinea's in het NEDERLANDS met:
-- Een korte conclusie: lijkt dit bericht eerder betrouwbaar of eerder verdacht?
-- Een uitleg in eenvoudige taal die past bij deze doelgroep.
-- Concrete verwijzingen naar delen van de e-mail (bijv. dreigende taal, tijdsdruk, links, vraag om gegevens).
-- Praktische tips voor deze doelgroep (bv. "klik niet zomaar op links", "check de afzender", ...).
-- Geen technische termen uitleggen als dat niet nodig is; houd het begrijpelijk.
+TAKEN:
+1. Begin met één duidelijke zin: lijkt deze e-mail eerder betrouwbaar of eerder verdacht?
+2. Leg daarna in 1 à 2 korte alinea's uit waarom, met verwijzingen naar concrete elementen
+   uit de e-mail (toon, dreigende taal, tijdsdruk, beloftes van prijzen, links, vragen om gegevens, ...).
+3. Sluit af met 2 à 3 praktische tips speciaal voor deze doelgroep.
 
-Gebruik GEEN bullet lists, geen code en herhaal de tekst van de e-mail niet letterlijk;
-geef alleen een leesbare uitleg.
+REGELS:
+- Schrijf in eenvoudig NEDERLANDS.
+- Schrijf alleen vloeiende tekst (geen opsommingstekens, geen headings).
+- Herhaal de onderstaande instructies niet. Geef alleen de uitleg over de e-mail.
 
-==============================
-TE ANALYSEREN BERICHT:
-------------------------------
+====================================
+E-MAIL:
+------------------------------------
 {email_text}
 
-==============================
-MODEL-OUTPUT (VERDACHTE-BERICHTEN CLASSIFIER):
-------------------------------
+====================================
+MODEL-UITVOER (VERDACHTE-BERICHTEN CLASSIFIER):
+------------------------------------
 {teacher_str}
 
-==============================
-SHAP-SAMENVATTING (VERDACHTE / NIET-VERDACHTE WOORDEN):
-------------------------------
+====================================
+BELANGRIJKSTE WOORDEN VOLGENS SHAP:
+------------------------------------
 {shap_json}
 
-==============================
-UITLEG VOOR DEZE DOELGROEP:
+====================================
+UITLEG:
 """
     return prompt.strip()
 
 
 def generate_explanation_for_audience(
-    email_text: str,
+    email_text,
     x_sparse_row,
-    vectorizer: CountVectorizer,
-    explainer: shap.TreeExplainer,
+    vectorizer,
+    explainer,
     teacher_pipeline,
-    explainer_pipeline,
-    audience: str,
-    max_new_tokens: int = 250
+    audience,
+    max_new_tokens=300,
 ):
-    """
-    Uitleg genereren voor een bepaalde doelgroep (jongeren / ouder publiek),
-    met een lokaal Hugging Face instruct-model.
-    """
     teacher_raw, _ = get_teacher_raw_and_score(teacher_pipeline, email_text)
     shap_summary = get_shap_summary(x_sparse_row, vectorizer, explainer, top_k=5)
 
-    prompt = build_explanation_prompt(
-        email_text=email_text,
-        teacher_raw=teacher_raw,
-        shap_summary=shap_summary,
-        audience=audience
-    )
+    prompt = build_explanation_prompt(email_text, teacher_raw, shap_summary, audience)
+    gen = generate_with_gemini(prompt, max_tokens=max_new_tokens)
 
-    result = explainer_pipeline(
-        prompt,
-        max_new_tokens=max_new_tokens,
-        do_sample=True,
-        temperature=0.4,
-    )
-
-    gen = result[0]["generated_text"]
-
-    # Prompt eruit knippen als het model hem terug-echoot
-    if "UITLEG VOOR DEZE DOELGROEP:" in gen:
-        gen = gen.split("UITLEG VOOR DEZE DOELGROEP:")[-1].strip()
+    if "UITLEG:" in gen:
+        gen = gen.split("UITLEG:")[-1].strip()
 
     return gen.strip(), shap_summary
 
 
 # ============================================================
-# 5. STREAMLIT UI (jouw “oude” layout)
+# 5. STREAMLIT UI (ONVERANDERD DESIGN)
 # ============================================================
 
 def main():
-    st.set_page_config(page_title="FHMI Phishing XAI Demo (lokaal HF)", layout="wide")
+    st.set_page_config(page_title="FHMI Phishing XAI Demo (Gemini 2.5 Flash)", layout="wide")
 
-    st.title("📧 FHMI Phishing XAI Demo (lokaal Hugging Face uitleg-LLM)")
+    st.title("📧 FHMI Phishing XAI Demo (Gemini 2.5 Flash)")
     st.write(
-        "Deze demo combineert een Hugging Face model, een surrogaatmodel met SHAP, "
-        "en een lokaal instruct-model om verdachte e-mails uit te leggen voor verschillende doelgroepen."
+        "Deze demo combineert een Hugging Face teacher-model, een surrogaatmodel met SHAP, "
+        "en Gemini 2.5 Flash om verdachte e-mails uit te leggen voor verschillende doelgroepen."
     )
 
     with st.expander("🔧 Hoe werkt dit (kort)?", expanded=False):
@@ -298,7 +270,7 @@ def main():
 1. **Teacher-model (Hugging Face)**: bepaalt of een e-mail verdacht/spam is.  
 2. **Surrogaatmodel (RandomForest + bag-of-words)**: leert het gedrag van de teacher na, maar is beter uitlegbaar.  
 3. **SHAP**: toont welke woorden/uitdrukkingen de score omhoog of omlaag duwen.  
-4. **Lokaal uitleg-LLM**: maakt op basis van e-mail + teacher-output + SHAP een menselijke uitleg,  
+4. **Gemini LLM**: maakt op basis van e-mail + teacher-output + SHAP een menselijke uitleg,  
    afgestemd op **jongeren** en op een **ouder publiek**.
             """
         )
@@ -308,11 +280,10 @@ def main():
     email_text = st.text_area(
         "Plak hier een e-mail (bij voorkeur in het Nederlands):",
         height=200,
-        placeholder="Beste klant, uw account wordt binnen 24 uur geblokkeerd. Klik op deze link..."
+        placeholder="Beste klant, uw account wordt binnen 24 uur geblokkeerd. Klik op deze link...",
     )
 
     col_left, col_right = st.columns([1, 2])
-
     with col_left:
         analyze = st.button("Analyseer e-mail")
 
@@ -323,18 +294,15 @@ def main():
 
         with st.spinner("Modellen laden en analyse uitvoeren..."):
             teacher = load_teacher_pipeline()
-            explainer_llm = load_explainer_pipeline()
             vectorizer, student, shap_explainer = build_surrogate_model_cached()
 
-            # Teacher score
             teacher_raw, teacher_score = get_teacher_raw_and_score(teacher, email_text)
 
-            # Surrogaatmodel score
             x_sparse = vectorizer.transform([email_text])
             x_dense = x_sparse.toarray()
             student_score = float(student.predict(x_dense)[0])
 
-            # Uitleg voor jongeren
+            # Jongeren
             audience_young = (
                 "jongeren tussen 16 en 25 jaar, die veel online zijn, social media gebruiken "
                 "en geen zin hebben in lange, saaie uitleg. Gebruik een directe, herkenbare toon "
@@ -346,12 +314,11 @@ def main():
                 vectorizer=vectorizer,
                 explainer=shap_explainer,
                 teacher_pipeline=teacher,
-                explainer_pipeline=explainer_llm,
                 audience=audience_young,
-                max_new_tokens=220
+                max_new_tokens=260,
             )
 
-            # Uitleg voor ouder publiek
+            # Oudere doelgroep
             audience_older = (
                 "volwassenen tussen 40 en 70 jaar, die regelmatig e-mails krijgen van bank, overheid "
                 "en werk, maar zich niet dagelijks bezighouden met IT-beveiliging. Gebruik een rustige, "
@@ -363,12 +330,10 @@ def main():
                 vectorizer=vectorizer,
                 explainer=shap_explainer,
                 teacher_pipeline=teacher,
-                explainer_pipeline=explainer_llm,
                 audience=audience_older,
-                max_new_tokens=260
+                max_new_tokens=280,
             )
 
-        # Resultaten tonen
         st.markdown("## 🔍 Model-scores")
         score_cols = st.columns(2)
         with score_cols[0]:
