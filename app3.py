@@ -527,6 +527,10 @@ if "stim_idx" not in st.session_state:
     st.session_state["stim_idx"] = 0
 if "start_time" not in st.session_state:
     st.session_state["start_time"] = None
+# Cache voor Gemini-output (blijft staan bij reruns)
+if "gemini_cache" not in st.session_state:
+    st.session_state["gemini_cache"] = {}
+
 
 idx = st.session_state["stim_idx"]
 
@@ -571,16 +575,25 @@ elif condition == "full_xai":
     highlighted_html, cue_summary, explanation_md, learning_points = categorize_phishing_cues(
         email_text, shap_vec, top_k=10
     )
+
     st.subheader("🔎 Verdachte woorden (highlights)")
-    st.markdown(f"<div style='white-space:pre-wrap'>{highlighted_html}</div>",
-                unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='white-space:pre-wrap'>{highlighted_html}</div>",
+        unsafe_allow_html=True,
+    )
 
-    # ---- Gemini-uitleg toevoegen (geïnspireerd op app2.py) ----
-    shap_summary_for_gemini = build_shap_summary_from_linear(X_new, shap_vec, FEATURE_NAMES, top_k=5)
-
+    # ------------------------------------------------------------
+    # GEMINI-UITLEG (PERSISTENT via st.session_state)
+    # ------------------------------------------------------------
     st.subheader("🤖 Gemini-uitleg (doelgroepspecifiek)")
 
-    tab_young, tab_older = st.tabs(["Voor jongeren (16–25)", "Voor ouder publiek (40–70)"])
+    shap_summary_for_gemini = build_shap_summary_from_linear(
+        X_new, shap_vec, FEATURE_NAMES, top_k=5
+    )
+
+    tab_young, tab_older = st.tabs(
+        ["Voor jongeren (16–25)", "Voor ouder publiek (40–70)"]
+    )
 
     audience_young = (
         "jongeren tussen 16 en 25 jaar, die veel online zijn, social media gebruiken "
@@ -593,25 +606,50 @@ elif condition == "full_xai":
         "duidelijke toon en leg stap voor stap uit wat er verdacht is."
     )
 
-    with st.spinner("Gemini-uitleg genereren..."):
-        explanation_young = generate_explanation_with_gemini(
-            email_text=email_text,
-            shap_summary=shap_summary_for_gemini,
-            audience=audience_young,
-            max_new_tokens=260,
-        )
-        explanation_older = generate_explanation_with_gemini(
-            email_text=email_text,
-            shap_summary=shap_summary_for_gemini,
-            audience=audience_older,
-            max_new_tokens=280,
-        )
+    # Cache keys per stimulus + doelgroep + conditie
+    cache_key_young = (stim_id, "young", condition)
+    cache_key_older = (stim_id, "older", condition)
 
-    with tab_young:
-        st.write(explanation_young)
+    colA, colB = st.columns([1, 4])
+    with colA:
+        gen_btn = st.button("Genereer Gemini-uitleg", key=f"gen_gemini_{stim_id}")
 
-    with tab_older:
-        st.write(explanation_older)
+    def ensure_gemini_cached():
+        if cache_key_young not in st.session_state["gemini_cache"]:
+            st.session_state["gemini_cache"][cache_key_young] = generate_explanation_with_gemini(
+                email_text=email_text,
+                shap_summary=shap_summary_for_gemini,
+                audience=audience_young,
+                max_new_tokens=260,
+            )
+
+        if cache_key_older not in st.session_state["gemini_cache"]:
+            st.session_state["gemini_cache"][cache_key_older] = generate_explanation_with_gemini(
+                email_text=email_text,
+                shap_summary=shap_summary_for_gemini,
+                audience=audience_older,
+                max_new_tokens=280,
+            )
+
+    already_have_any = (
+        cache_key_young in st.session_state["gemini_cache"]
+        or cache_key_older in st.session_state["gemini_cache"]
+    )
+
+    # Genereer enkel wanneer je op de knop klikt (en daarna blijft alles staan)
+    if gen_btn:
+        with st.spinner("Gemini-uitleg genereren..."):
+            ensure_gemini_cached()
+
+    if not already_have_any and not gen_btn:
+        st.info("Klik op 'Genereer Gemini-uitleg' om de uitleg te tonen.")
+    else:
+        with tab_young:
+            st.write(st.session_state["gemini_cache"].get(cache_key_young, ""))
+
+        with tab_older:
+            st.write(st.session_state["gemini_cache"].get(cache_key_older, ""))
+
 
 st.markdown("---")
 
