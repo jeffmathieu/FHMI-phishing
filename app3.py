@@ -550,17 +550,7 @@ is_spam_ai, score_ai, raw_label = hf_predict_ui(email_text)
 ai_color = "#d9534f" if is_spam_ai else "#5cb85c"
 ai_label_str = "SPAM/PHISHING" if is_spam_ai else "NOT SPAM"
 
-st.markdown(
-    f"""
-    <div style="border-left:6px solid {ai_color}; padding:12px; margin-bottom:16px;">
-      <b>AI classificatie (HuggingFace model):</b> 
-      <span style="color:{ai_color}; font-weight:bold;">{ai_label_str}</span><br>
-      <b>Modelscore:</b> {int(score_ai*100)}%<br>
-      <small>Ruw model-label: {raw_label}</small>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+
 
 # Surrogate SHAP-explainer (LinearExplainer)
 X_new = vectorizer.transform([email_text])
@@ -584,16 +574,6 @@ elif condition == "full_xai":
     st.subheader("🔎 Verdachte woorden (highlights)")
     st.markdown(f"<div style='white-space:pre-wrap'>{highlighted_html}</div>",
                 unsafe_allow_html=True)
-
-    st.subheader("🧠 Waarom denkt de AI dat dit phishing is? (categorieën + SHAP)")
-    st.markdown(explanation_md)
-
-    st.subheader("📘 Wat kun je hiervan leren?")
-    if learning_points:
-        for lp in learning_points:
-            st.markdown(f"- {lp}")
-    else:
-        st.markdown("- In deze mail vonden we geen duidelijke phishingcategorieën.")
 
     # ---- Gemini-uitleg toevoegen (geïnspireerd op app2.py) ----
     shap_summary_for_gemini = build_shap_summary_from_linear(X_new, shap_vec, FEATURE_NAMES, top_k=5)
