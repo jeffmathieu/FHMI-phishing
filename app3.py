@@ -501,11 +501,11 @@ def generate_explanation_with_gemini(
 
 
 # ============================================================
-# 6. STREAMLIT UI – GECOMBINEERDE EXPERIMENTELE APP
+# 6. STREAMLIT UI
 # ============================================================
 
 st.set_page_config(page_title="Phishing XAI Experiment (met Gemini)", page_icon="🛡️", layout="wide")
-st.title("🛡️ Phishing XAI Experiment – Spamfilter met uitleg (incl. Gemini)")
+st.title("Phishing XAI Experiment – Spamfilter met uitleg")
 
 with st.sidebar:
     st.header("Deelnemer & conditie")
