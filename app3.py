@@ -16,6 +16,16 @@ import json
 
 from google import genai
 
+@st.cache_data
+def load_precomputed_explanations():
+    try:
+        with open("gemini_cache.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        st.error("gemini_cache.json not found! Run the precompute script first.")
+        return {}
+
+precomputed_data = load_precomputed_explanations()
 # ============================================================
 # CONFIG
 # ============================================================
@@ -77,43 +87,114 @@ CATEGORY_TEXT = {
 STIMULI = [
     {
         "id": "mail1",
-        "text": """From: Microsoft Support <no-reply@secure-micr0soft.com>
-Subject: Final notice - verify your account immediately
-
-Dear user,
-Your account will be suspended TODAY. Click here to verify your password and keep your access:
-https://bit.ly/verify-365
-
-Regards,
-Security Team""",
+        "text": """Sender: Help Center info.help-center.co@gmail.com
+Subject: Netflix : We're having some trouble with your current billing information
+HELLO,   Please note that, your monthly payment has been failed. Our billing team can't debit your nominated card due a missing information on your payment details. Please verify your details again to avoid any delay on your service.   https://netflix.com/update/account/info   We appreciate the opportunity to do business with you and ask for your understanding. Netflix support
+""",
         "ground_truth": 1,  # 1 = phishing, 0 = legit
     },
-    {
+{
         "id": "mail2",
-        "text": """Hi,
-Here is the agenda for tomorrow's project meeting. Let me know if anything needs to be changed.
+        "text": """Sender: hr-dept@perl.org
+Subject: Perl Developer (onsite)
+Hello, 
+There is a job application available.
+Online URL for this job: http://jobs.perl.org/job/7898
 
-Best,
-Anne""",
+To subscribe to this list, send mail to jobs-subscribe@perl.org.
+To unsubscribe, send mail to jobs-unsubscribe@perl.org.
+""",
         "ground_truth": 0,
     },
     {
         "id": "mail3",
-        "text": """Dear customer,
-We noticed unusual activity on your PayPal account. Log in now to confirm your identity or your account will be blocked.
+        "text": """Sender: Prize Allocation Dept <winners@lucky-draw-global.com> 
+Subject: CLAIM YOUR $500 GIFT CARD NOW
+Congratulations!
+Your email address was randomly selected in our weekly draw. You've won a $500 gift card.
+To claim your prize, simply reply to this email with your:
+1.	Full Name
+2.	Mailing Address
+3.	Phone Number
+Do not delay, or your prize will be forfeited.
+""",
+        "ground_truth": 1,
+    },
 
-Sincerely,
-PayPal Security""",
+    {
+        "id": "mail4",
+        "text": """Sender: support@eprints.dinus.ac.id
+Subject: Your Meta wallet will be suspended
+Verify your Meta Wallet. Our system has shown that your MetaMask wallet has not yet been verified, this verification can be done easily via the button below. Unverified accounts will be suspended on: Wednesday, 09 November 2022. We are sorry for any inconvenience caused by this, but please note that our intention is to keep our customers safe and happy. Safety is and will remain our highest priority. 
+[Verify My MetaMask]
+Thank you for choosing us.   
+Best regards
+""",
         "ground_truth": 1,
     },
     {
-        "id": "mail4",
-        "text": """Hello,
-Thanks again for your help last week. The updated report is attached in the shared folder.
+        "id": "mail5",
+        "text": """Sender: cnnalerts@mail.cnn.com
+Subject: CNN Alerts
+Maintaining security in Diyala province north of Baghdad will be impossible if U.S. troops are withdrawn from Iraq, according to a U.S. senior ground commander there.
+FULL STORY: cnn.com/2022/WORLD/meast/07/05/iraq.commander/
 
-Kind regards,
-Tom""",
+
+You have agreed to receive this email from cnn.com as a result of your cnn.com preference settings.
+To alter your alert criteria or frequency or to unsubscribe from receiving custom email alerts, reply to this email.
+Refer a friend or colleague to CNN's FREE personalized alerting service!
+
+© 2022 Cable News Network, LP, LLLP.
+A Time Warner Company. All Rights Reserved.
+""",
         "ground_truth": 0,
+    },
+    {
+        "id": "mail6",
+        "text": """Sender: Security Alert <security@verify-bank-access.net> 
+Subject: Alert: Unusual login attempt detected.
+We noticed some unusual activity in your account. A sign-in attempt was made from an unrecognized device in Lagos, Nigeria.
+Log in to review recent transactions. [Review Activity Now] (http://secure-account-verify-signin.com)
+
+""",
+        "ground_truth": 1,
+    },
+{
+        "id": "mail7",
+        "text": """Sender: Billing Services <invoicing@service-payment-overdue.com> 
+Subject: OVERDUE: Invoice #9982
+Your invoice is attached. Please review and pay promptly to avoid penalties.
+We have attempted to charge your card on file twice. Please open the attached PDF "Invoice_9982.pdf" to view the outstanding balance and payment instructions.
+""",
+        "ground_truth": 1,
+    },
+    {
+        "id": "mail8",
+        "text": """Sender: Subscription Management <billing@saas-tool.com> 
+    Subject: Renewal Success
+    Dear Jordan, your subscription has been successfully renewed. Thank you for your continued support.
+    You can view your receipt and subscription details on your dashboard: [https://dashboard.saas-tool.com/billing]
+    """,
+        "ground_truth": 0,
+    },
+    {
+        "id": "mail9",
+        "text": """Sender: Marketing Team <marketing@brand-store.com> 
+Subject: Your Order #12345
+Dear Casey, thank you for your purchase. Your order will be shipped soon.
+You can track your package via FedEx using the link below: [https://www.fedex.com/track/123456789]
+Thank you for shopping with us!
+""",
+        "ground_truth": 0,
+    },
+{
+        "id": "mail10",
+        "text": """Sender: Bank Alerts <notifications@belfius-message.co> 
+Subject: New Message Center Notification
+You have a new security message from your bank. Urgently view the message for further action.
+Click here to read it.  ( https://beIfius.be/notifications )
+""",
+        "ground_truth": 1,
     },
 ]
 
@@ -337,7 +418,7 @@ def build_shap_summary_from_linear(X_new, shap_vec: np.ndarray, feature_names: n
         negative.append({"token": feature_names[i], "shap": float(shap_vals[i])})
         if len(negative) >= top_k:
             break
-
+    print(positive,negative)
     return {"positive": positive, "negative": negative}
 
 
@@ -490,6 +571,7 @@ def generate_explanation_with_gemini(
 ):
     teacher = load_teacher_pipeline()
     teacher_raw, _ = get_teacher_raw_and_score(teacher, email_text)
+    #print(shap_summary)
 
     prompt = build_explanation_prompt(email_text, teacher_raw, shap_summary, audience)
     gen = generate_with_gemini(prompt, max_tokens=max_new_tokens)
@@ -587,16 +669,24 @@ elif condition == "full_xai":
     # ------------------------------------------------------------
     st.subheader("🤖 Gemini-uitleg (doelgroepspecifiek)")
 
-    shap_summary_for_gemini = build_shap_summary_from_linear(
-        X_new, shap_vec, FEATURE_NAMES, top_k=5
-    )
 
     tab_young, tab_older = st.tabs(
         ["Voor jongeren (16–25)", "Voor ouder publiek (40–70)"]
     )
 
+    current_explanations = precomputed_data.get(stim_id, {
+        "young": "Geen uitleg beschikbaar.",
+        "older": "Geen uitleg beschikbaar."
+    })
+
+    with tab_young:
+        st.write(current_explanations["young"])
+
+    with tab_older:
+        st.write(current_explanations["older"])
+
     audience_young = (
-        "jongeren tussen 16 en 25 jaar, die veel online zijn, social media gebruiken "
+        "jongeren tussen 16 en 25 jaar, die veel online zijn, social media gebruiken,"
         "en geen zin hebben in lange, saaie uitleg. Gebruik een directe, herkenbare toon "
         "en voorbeelden uit hun digitale leven."
     )
