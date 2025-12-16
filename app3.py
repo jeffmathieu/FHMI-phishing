@@ -8,7 +8,6 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import streamlit as st
-from google import genai
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 import shap
@@ -205,6 +204,7 @@ Click here to read it.  ( https://beIfius.be/notifications )
         "ground_truth": 1,
     },
 ]
+
 # ============================================================
 # 1. SURROGATE MODEL (TF-IDF + LR) + SHAP VOOR HIGHLIGHTS
 # ============================================================
@@ -425,7 +425,7 @@ def build_shap_summary_from_linear(X_new, shap_vec: np.ndarray, feature_names: n
         negative.append({"token": feature_names[i], "shap": float(shap_vals[i])})
         if len(negative) >= top_k:
             break
-    print(positive,negative)
+
     return {"positive": positive, "negative": negative}
 
 
@@ -578,7 +578,6 @@ def generate_explanation_with_gemini(
 ):
     teacher = load_teacher_pipeline()
     teacher_raw, _ = get_teacher_raw_and_score(teacher, email_text)
-    #print(shap_summary)
 
     prompt = build_explanation_prompt(email_text, teacher_raw, shap_summary, audience)
     gen = generate_with_gemini(prompt, max_tokens=max_new_tokens)
