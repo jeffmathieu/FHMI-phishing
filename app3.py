@@ -14,8 +14,17 @@ import shap
 from transformers import pipeline
 import json
 
-from google import genai
 
+@st.cache_data
+def load_precomputed_explanations():
+    try:
+        with open("gemini_cache.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        st.error("gemini_cache.json not found! Run the precompute script first.")
+        return {}
+
+precomputed_data = load_precomputed_explanations()
 # ============================================================
 # CONFIG
 # ============================================================
@@ -77,43 +86,114 @@ CATEGORY_TEXT = {
 STIMULI = [
     {
         "id": "mail1",
-        "text": """From: Microsoft Support <no-reply@secure-micr0soft.com>
-Subject: Final notice - verify your account immediately
-
-Dear user,
-Your account will be suspended TODAY. Click here to verify your password and keep your access:
-https://bit.ly/verify-365
-
-Regards,
-Security Team""",
+        "text": """Sender: Help Center info.help-center.co@gmail.com
+Subject: Netflix : We're having some trouble with your current billing information
+HELLO,   Please note that, your monthly payment has been failed. Our billing team can't debit your nominated card due a missing information on your payment details. Please verify your details again to avoid any delay on your service.   https://netflix.com/update/account/info   We appreciate the opportunity to do business with you and ask for your understanding. Netflix support
+""",
         "ground_truth": 1,  # 1 = phishing, 0 = legit
     },
-    {
+{
         "id": "mail2",
-        "text": """Hi,
-Here is the agenda for tomorrow's project meeting. Let me know if anything needs to be changed.
+        "text": """Sender: hr-dept@perl.org
+Subject: Perl Developer (onsite)
+Hello, 
+There is a job application available.
+Online URL for this job: http://jobs.perl.org/job/7898
 
-Best,
-Anne""",
+To subscribe to this list, send mail to jobs-subscribe@perl.org.
+To unsubscribe, send mail to jobs-unsubscribe@perl.org.
+""",
         "ground_truth": 0,
     },
     {
         "id": "mail3",
-        "text": """Dear customer,
-We noticed unusual activity on your PayPal account. Log in now to confirm your identity or your account will be blocked.
+        "text": """Sender: Prize Allocation Dept <winners@lucky-draw-global.com> 
+Subject: CLAIM YOUR $500 GIFT CARD NOW
+Congratulations!
+Your email address was randomly selected in our weekly draw. You've won a $500 gift card.
+To claim your prize, simply reply to this email with your:
+1.	Full Name
+2.	Mailing Address
+3.	Phone Number
+Do not delay, or your prize will be forfeited.
+""",
+        "ground_truth": 1,
+    },
 
-Sincerely,
-PayPal Security""",
+    {
+        "id": "mail4",
+        "text": """Sender: support@eprints.dinus.ac.id
+Subject: Your Meta wallet will be suspended
+Verify your Meta Wallet. Our system has shown that your MetaMask wallet has not yet been verified, this verification can be done easily via the button below. Unverified accounts will be suspended on: Wednesday, 09 November 2022. We are sorry for any inconvenience caused by this, but please note that our intention is to keep our customers safe and happy. Safety is and will remain our highest priority. 
+[Verify My MetaMask]
+Thank you for choosing us.   
+Best regards
+""",
         "ground_truth": 1,
     },
     {
-        "id": "mail4",
-        "text": """Hello,
-Thanks again for your help last week. The updated report is attached in the shared folder.
+        "id": "mail5",
+        "text": """Sender: cnnalerts@mail.cnn.com
+Subject: CNN Alerts
+Maintaining security in Diyala province north of Baghdad will be impossible if U.S. troops are withdrawn from Iraq, according to a U.S. senior ground commander there.
+FULL STORY: cnn.com/2022/WORLD/meast/07/05/iraq.commander/
 
-Kind regards,
-Tom""",
+
+You have agreed to receive this email from cnn.com as a result of your cnn.com preference settings.
+To alter your alert criteria or frequency or to unsubscribe from receiving custom email alerts, reply to this email.
+Refer a friend or colleague to CNN's FREE personalized alerting service!
+
+© 2022 Cable News Network, LP, LLLP.
+A Time Warner Company. All Rights Reserved.
+""",
         "ground_truth": 0,
+    },
+    {
+        "id": "mail6",
+        "text": """Sender: Security Alert <security@verify-bank-access.net> 
+Subject: Alert: Unusual login attempt detected.
+We noticed some unusual activity in your account. A sign-in attempt was made from an unrecognized device in Lagos, Nigeria.
+Log in to review recent transactions. [Review Activity Now] (http://secure-account-verify-signin.com)
+
+""",
+        "ground_truth": 1,
+    },
+{
+        "id": "mail7",
+        "text": """Sender: Billing Services <invoicing@service-payment-overdue.com> 
+Subject: OVERDUE: Invoice #9982
+Your invoice is attached. Please review and pay promptly to avoid penalties.
+We have attempted to charge your card on file twice. Please open the attached PDF "Invoice_9982.pdf" to view the outstanding balance and payment instructions.
+""",
+        "ground_truth": 1,
+    },
+    {
+        "id": "mail8",
+        "text": """Sender: Subscription Management <billing@saas-tool.com> 
+    Subject: Renewal Success
+    Dear Jordan, your subscription has been successfully renewed. Thank you for your continued support.
+    You can view your receipt and subscription details on your dashboard: [https://dashboard.saas-tool.com/billing]
+    """,
+        "ground_truth": 0,
+    },
+    {
+        "id": "mail9",
+        "text": """Sender: Marketing Team <marketing@brand-store.com> 
+Subject: Your Order #12345
+Dear Casey, thank you for your purchase. Your order will be shipped soon.
+You can track your package via FedEx using the link below: [https://www.fedex.com/track/123456789]
+Thank you for shopping with us!
+""",
+        "ground_truth": 0,
+    },
+{
+        "id": "mail10",
+        "text": """Sender: Bank Alerts <notifications@belfius-message.co> 
+Subject: New Message Center Notification
+You have a new security message from your bank. Urgently view the message for further action.
+Click here to read it.  ( https://beIfius.be/notifications )
+""",
+        "ground_truth": 1,
     },
 ]
 
@@ -337,7 +417,7 @@ def build_shap_summary_from_linear(X_new, shap_vec: np.ndarray, feature_names: n
         negative.append({"token": feature_names[i], "shap": float(shap_vals[i])})
         if len(negative) >= top_k:
             break
-
+    print(positive,negative)
     return {"positive": positive, "negative": negative}
 
 
@@ -490,6 +570,7 @@ def generate_explanation_with_gemini(
 ):
     teacher = load_teacher_pipeline()
     teacher_raw, _ = get_teacher_raw_and_score(teacher, email_text)
+    #print(shap_summary)
 
     prompt = build_explanation_prompt(email_text, teacher_raw, shap_summary, audience)
     gen = generate_with_gemini(prompt, max_tokens=max_new_tokens)
@@ -572,83 +653,51 @@ elif condition == "highlight_only":
                 unsafe_allow_html=True)
 
 elif condition == "full_xai":
+    # ------------------------------------------------------------
+    # 1. VISUAL HIGHLIGHTS & CATEGORIZATION
+    # ------------------------------------------------------------
     highlighted_html, cue_summary, explanation_md, learning_points = categorize_phishing_cues(
         email_text, shap_vec, top_k=10
     )
 
     st.subheader("🔎 Verdachte woorden (highlights)")
+
+    # Render the email text with highlighted words
     st.markdown(
-        f"<div style='white-space:pre-wrap'>{highlighted_html}</div>",
+        f"<div style='white-space:pre-wrap; border:1px solid #ddd; padding:15px; border-radius:5px; background-color: #f9f9f9;'>{highlighted_html}</div>",
         unsafe_allow_html=True,
     )
 
     # ------------------------------------------------------------
-    # GEMINI-UITLEG (PERSISTENT via st.session_state)
+    # 2. GEMINI TEXT EXPLANATION (PRE-COMPUTED)
     # ------------------------------------------------------------
     st.subheader("🤖 Gemini-uitleg (doelgroepspecifiek)")
 
-    shap_summary_for_gemini = build_shap_summary_from_linear(
-        X_new, shap_vec, FEATURE_NAMES, top_k=5
-    )
-
+    # Create tabs for different audiences
     tab_young, tab_older = st.tabs(
         ["Voor jongeren (16–25)", "Voor ouder publiek (40–70)"]
     )
 
-    audience_young = (
-        "jongeren tussen 16 en 25 jaar, die veel online zijn, social media gebruiken "
-        "en geen zin hebben in lange, saaie uitleg. Gebruik een directe, herkenbare toon "
-        "en voorbeelden uit hun digitale leven."
-    )
-    audience_older = (
-        "volwassenen tussen 40 en 70 jaar, die regelmatig e-mails krijgen van bank, overheid "
-        "en werk, maar zich niet dagelijks bezighouden met IT-beveiliging. Gebruik een rustige, "
-        "duidelijke toon en leg stap voor stap uit wat er verdacht is."
-    )
+    # Retrieve the specific explanation for the current email ID
+    # We use .get() to provide a safe fallback if the ID isn't in the JSON
+    current_explanations = precomputed_data.get(stim_id, {
+        "young": "⚠️ Er is nog geen uitleg gegenereerd voor deze e-mail. Draai het 'generate_gemini.py' script eerst.",
+        "older": "⚠️ Er is nog geen uitleg gegenereerd voor deze e-mail. Draai het 'generate_gemini.py' script eerst."
+    })
 
-    # Cache keys per stimulus + doelgroep + conditie
-    cache_key_young = (stim_id, "young", condition)
-    cache_key_older = (stim_id, "older", condition)
+    # Display the text in the appropriate tabs
+    with tab_young:
+        st.markdown(current_explanations["young"])
 
-    colA, colB = st.columns([1, 4])
-    with colA:
-        gen_btn = st.button("Genereer Gemini-uitleg", key=f"gen_gemini_{stim_id}")
+    with tab_older:
+        st.markdown(current_explanations["older"])
 
-    def ensure_gemini_cached():
-        if cache_key_young not in st.session_state["gemini_cache"]:
-            st.session_state["gemini_cache"][cache_key_young] = generate_explanation_with_gemini(
-                email_text=email_text,
-                shap_summary=shap_summary_for_gemini,
-                audience=audience_young,
-                max_new_tokens=260,
-            )
-
-        if cache_key_older not in st.session_state["gemini_cache"]:
-            st.session_state["gemini_cache"][cache_key_older] = generate_explanation_with_gemini(
-                email_text=email_text,
-                shap_summary=shap_summary_for_gemini,
-                audience=audience_older,
-                max_new_tokens=280,
-            )
-
-    already_have_any = (
-        cache_key_young in st.session_state["gemini_cache"]
-        or cache_key_older in st.session_state["gemini_cache"]
-    )
-
-    # Genereer enkel wanneer je op de knop klikt (en daarna blijft alles staan)
-    if gen_btn:
-        with st.spinner("Gemini-uitleg genereren..."):
-            ensure_gemini_cached()
-
-    if not already_have_any and not gen_btn:
-        st.info("Klik op 'Genereer Gemini-uitleg' om de uitleg te tonen.")
-    else:
-        with tab_young:
-            st.write(st.session_state["gemini_cache"].get(cache_key_young, ""))
-
-        with tab_older:
-            st.write(st.session_state["gemini_cache"].get(cache_key_older, ""))
+    # ------------------------------------------------------------
+    # 3. EXTRA: LEARNING POINTS (OPTIONAL)
+    # ------------------------------------------------------------
+    # Shows the bullet points derived from the rule-based categories (categorize_phishing_cues)
+    if learning_points:
+        st.info("**Belangrijkste lessen:**\n\n" + "\n".join([f"- {p}" for p in learning_points]))
 
 
 st.markdown("---")
