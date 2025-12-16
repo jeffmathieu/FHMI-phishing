@@ -8,22 +8,29 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import streamlit as st
+from google import genai
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 import shap
 from transformers import pipeline
 import json
 
-from google import genai
 
 @st.cache_data
 def load_precomputed_explanations():
-    try:
-        with open("gemini_cache.json", "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        st.error("gemini_cache.json not found! Run the precompute script first.")
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(current_dir, "pre_generated_mails.json")
+
+    if not os.path.exists(file_path):
         return {}
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        st.error(f"Error loading JSON file: {e}")
+        return {}
+
 
 precomputed_data = load_precomputed_explanations()
 # ============================================================
@@ -99,7 +106,7 @@ HELLO,   Please note that, your monthly payment has been failed. Our billing tea
 Subject: Perl Developer (onsite)
 Hello, 
 There is a job application available.
-Online URL for this job: http://jobs.perl.org/job/7898
+Online URL for this job: https://jobs.perl.org/job/7898
 
 To subscribe to this list, send mail to jobs-subscribe@perl.org.
 To unsubscribe, send mail to jobs-unsubscribe@perl.org.
@@ -171,20 +178,21 @@ We have attempted to charge your card on file twice. Please open the attached PD
     {
         "id": "mail8",
         "text": """Sender: Subscription Management <billing@saas-tool.com> 
-    Subject: Renewal Success
-    Dear Jordan, your subscription has been successfully renewed. Thank you for your continued support.
-    You can view your receipt and subscription details on your dashboard: [https://dashboard.saas-tool.com/billing]
-    """,
+        Subject: Renewal Success
+        Dear Jordan, your subscription has been successfully renewed. Thank you for your continued support.
+        You can view your receipt and subscription details on your dashboard.
+        """,
         "ground_truth": 0,
     },
     {
         "id": "mail9",
-        "text": """Sender: Marketing Team <marketing@brand-store.com> 
-Subject: Your Order #12345
-Dear Casey, thank you for your purchase. Your order will be shipped soon.
-You can track your package via FedEx using the link below: [https://www.fedex.com/track/123456789]
-Thank you for shopping with us!
-""",
+        "text": """Sender: orders@fedex.com 
+    Subject: Your Order #34296
+    Dear Casey, thank you for your purchase. Your order will be shipped soon.
+    You can track your package via FedEx using the link below by providing the next tracking number: 94829285295711083.
+    Thank you for shopping with us!
+    [https://www.fedex.com/nl-be/tracking.html]
+    """,
         "ground_truth": 0,
     },
 {
@@ -197,7 +205,6 @@ Click here to read it.  ( https://beIfius.be/notifications )
         "ground_truth": 1,
     },
 ]
-
 # ============================================================
 # 1. SURROGATE MODEL (TF-IDF + LR) + SHAP VOOR HIGHLIGHTS
 # ============================================================
@@ -654,92 +661,44 @@ elif condition == "highlight_only":
                 unsafe_allow_html=True)
 
 elif condition == "full_xai":
+    # ------------------------------------------------------------
+    # 1. VISUAL HIGHLIGHTS & CATEGORIZATION
+    # ------------------------------------------------------------
     highlighted_html, cue_summary, explanation_md, learning_points = categorize_phishing_cues(
         email_text, shap_vec, top_k=10
     )
 
     st.subheader("🔎 Verdachte woorden (highlights)")
+
+    # Render the email text with highlighted words
     st.markdown(
-        f"<div style='white-space:pre-wrap'>{highlighted_html}</div>",
+        f"<div style='white-space:pre-wrap; border:1px solid #ddd; padding:15px; border-radius:5px; background-color: #f9f9f9;'>{highlighted_html}</div>",
         unsafe_allow_html=True,
     )
 
     # ------------------------------------------------------------
-    # GEMINI-UITLEG (PERSISTENT via st.session_state)
+    # 2. GEMINI TEXT EXPLANATION (SINGLE VERSION)
     # ------------------------------------------------------------
-    st.subheader("🤖 Gemini-uitleg (doelgroepspecifiek)")
+    st.subheader("🤖 Uitleg van de veiligheidsexpert")
 
+    # Retrieve the specific explanation for the current email ID
+    # We default to a standard message if the ID is missing
+    current_explanations = precomputed_data.get(stim_id, {})
 
-    tab_young, tab_older = st.tabs(
-        ["Voor jongeren (16–25)", "Voor ouder publiek (40–70)"]
+    # Get the 'older' text. If missing, show a fallback message.
+    explanation_text = current_explanations.get(
+        "older",
+        "⚠️ Er is nog geen uitleg beschikbaar voor deze e-mail."
     )
 
-    current_explanations = precomputed_data.get(stim_id, {
-        "young": "Geen uitleg beschikbaar.",
-        "older": "Geen uitleg beschikbaar."
-    })
+    # Display the explanation directly (No tabs)
+    st.markdown(explanation_text)
 
-    with tab_young:
-        st.write(current_explanations["young"])
-
-    with tab_older:
-        st.write(current_explanations["older"])
-
-    audience_young = (
-        "jongeren tussen 16 en 25 jaar, die veel online zijn, social media gebruiken,"
-        "en geen zin hebben in lange, saaie uitleg. Gebruik een directe, herkenbare toon "
-        "en voorbeelden uit hun digitale leven."
-    )
-    audience_older = (
-        "volwassenen tussen 40 en 70 jaar, die regelmatig e-mails krijgen van bank, overheid "
-        "en werk, maar zich niet dagelijks bezighouden met IT-beveiliging. Gebruik een rustige, "
-        "duidelijke toon en leg stap voor stap uit wat er verdacht is."
-    )
-
-    # Cache keys per stimulus + doelgroep + conditie
-    cache_key_young = (stim_id, "young", condition)
-    cache_key_older = (stim_id, "older", condition)
-
-    colA, colB = st.columns([1, 4])
-    with colA:
-        gen_btn = st.button("Genereer Gemini-uitleg", key=f"gen_gemini_{stim_id}")
-
-    def ensure_gemini_cached():
-        if cache_key_young not in st.session_state["gemini_cache"]:
-            st.session_state["gemini_cache"][cache_key_young] = generate_explanation_with_gemini(
-                email_text=email_text,
-                shap_summary=shap_summary_for_gemini,
-                audience=audience_young,
-                max_new_tokens=260,
-            )
-
-        if cache_key_older not in st.session_state["gemini_cache"]:
-            st.session_state["gemini_cache"][cache_key_older] = generate_explanation_with_gemini(
-                email_text=email_text,
-                shap_summary=shap_summary_for_gemini,
-                audience=audience_older,
-                max_new_tokens=280,
-            )
-
-    already_have_any = (
-        cache_key_young in st.session_state["gemini_cache"]
-        or cache_key_older in st.session_state["gemini_cache"]
-    )
-
-    # Genereer enkel wanneer je op de knop klikt (en daarna blijft alles staan)
-    if gen_btn:
-        with st.spinner("Gemini-uitleg genereren..."):
-            ensure_gemini_cached()
-
-    if not already_have_any and not gen_btn:
-        st.info("Klik op 'Genereer Gemini-uitleg' om de uitleg te tonen.")
-    else:
-        with tab_young:
-            st.write(st.session_state["gemini_cache"].get(cache_key_young, ""))
-
-        with tab_older:
-            st.write(st.session_state["gemini_cache"].get(cache_key_older, ""))
-
+    # ------------------------------------------------------------
+    # 3. EXTRA: LEARNING POINTS (OPTIONAL)
+    # ------------------------------------------------------------
+    if learning_points:
+        st.info("**Belangrijkste lessen:**\n\n" + "\n".join([f"- {p}" for p in learning_points]))
 
 st.markdown("---")
 
